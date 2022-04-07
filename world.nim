@@ -1,146 +1,167 @@
-import header, perlin, random, illwill, os, math
+import noisy, illwill, random, os, header, math
 
-proc createVArray(): array[MAP_HEIGHT, array[MAP_WIDTH, float]] = # Creates an array of floats that will store perlin values
-    var world: array[MAP_HEIGHT, array[MAP_WIDTH, float]]
-    return world
+proc `$`(p1, p2: tuple[x,y:int]): float =
+    result = sqrt(float((p2.x-p1.x)^2 + (p2.y-p1.y^2)))
 
-
-proc fillVArray(world: var array[MAP_HEIGHT, array[MAP_WIDTH, float]]) = # Fills the empty array with perlin values
-    randomize()
-
-    let noise = newNoise(randomSeed(),NOISE_OCTAVES,NOISE_FREQUENCY)
-
+proc createMap(seed, oct: int, amp, freq, lac, gain: float): Map =
+    var world: Map
+    var noise = initSimplex(seed)
+    noise.octaves = oct
+    noise.amplitude = amp
+    noise.frequency = freq
+    noise.lacunarity = lac
+    noise.gain = gain
+    let values = noise.grid((0, 0), (MAP_WIDTH, MAP_HEIGHT))
     for y in 0..<MAP_HEIGHT:
         for x in 0..<MAP_WIDTH:
-            world[y][x] = noise.perlin(x/2,y/2)*MULT # The /2 simply means that it's zoomed in 2x, makes the map larger, more realistic and less ugly
+            world.hMap[y][x] = values[x, y]
 
-
-proc createWorld*(): array[MAP_HEIGHT, array[MAP_WIDTH, float]] = # Self explanatory, creates the world
-    var world = createVArray()
-    world.fillVArray()
-    return world
-
-
-proc visualizeVArray(world: array[MAP_HEIGHT, array[MAP_WIDTH, float]]) = # This is the fun part
-    var 
-        tb = newTerminalBuffer(terminalWidth(), terminalHeight()) # Illwill stuff
-        bb = newBoxBuffer(terminalWidth(), terminalHeight()) # Illwill stuff again
-        hPos = (x:0, y:0) # The position of the highest point in the map
-        wPos = (x:0, y:0) # The position of the nearest water tile to the highest position on the map
-        lValue = 0.0 # Last value of the highest recorded position, basically a variable used to check the highest point on the map
-        vPos = (x: rand(0..MAP_WIDTH-1), y: rand(0..MAP_HEIGHT-1)) # Village pos
-        lDist = float(MAP_WIDTH) # Last distance, used to calculate the nearest water tile
-        hw = (x:0, y:0) # Temporary variable to draw the rivers
- 
+    var noise2 = initSimplex(seed*2)
+    noise2.octaves = oct
+    noise2.amplitude = amp
+    noise2.frequency = freq
+    noise2.lacunarity = lac
+    noise2.gain = gain
+    let values2 = noise2.grid((0, 0), (MAP_WIDTH, MAP_HEIGHT))
     for y in 0..<MAP_HEIGHT:
         for x in 0..<MAP_WIDTH:
-            for i in 0..<MAP_TILES.len:
-                if (MAP_SETTINGS[i] <= world[y][x] and world[y][x] < MAP_SETTINGS[i+1]): # Draws the map first, tile by tile
-                    tb.setForegroundColor(MAP_COLORS[i], MAP_BRIGHT[i]) # Chooses the color and brightness from the header file
-                    tb.write(x, y, MAP_TILES[i]) # Writes the designated tile from the header file
-            if world[y][x] > lValue: # This if chooses the hights point in the map
-                lValue = world[y][x]
-                hPos = (x,y)
-                hw = (x,y)
+            world.bMap[y][x] = values2[x, y]
+    return world
 
+proc fillMap(map: var Map) = 
+    for y in 0..<MAP_HEIGHT:
+        for x in 0..<MAP_WIDTH:
+            if map.hMap[y][x] <= MAP_SETTINGS[1]: # Is at or below water height
+                if rand(5) != 0:
+                    map.sMap[y][x] = MAP_TILES[0] # double wiggly water
+                else:
+                    map.sMap[y][x] = MAP_TILES[1] # single wiggly water
 
-    for i in 0..2: # Decides the village quantity
-        vPos = (x: rand(0..MAP_WIDTH-1), y: rand(0..MAP_HEIGHT-1)) 
-        while not (MAP_SETTINGS[2] < world[vPos.y][vPos.x] and world[vPos.y][vPos.x] < MAP_SETTINGS[4]): # Checks if the village position is not on water or mountains
-            vPos = (x: rand(0..MAP_WIDTH-1), y: rand(0..MAP_HEIGHT-1)) 
+            elif MAP_SETTINGS[1] < map.hMap[y][x] and map.hMap[y][x] <= MAP_SETTINGS[2]: # Is at sand height
+                map.sMap[y][x] = MAP_TILES[2] # sand
 
-        tb.setForegroundColor(fgYellow, bright=true)
-
-        for y in vPos.y-1..vPos.y+1: # Draws houses in 3x3 space randomly
-            for x in vPos.x-1..vPos.x+1:
-                if (0 <= x and x < MAP_WIDTH and 0 <= y and y < MAP_HEIGHT):
-                    if (MAP_SETTINGS[2] < world[y][x] and world[y][x] < MAP_SETTINGS[4]):
-                        if rand(1) == 0:
-                            tb.write(x ,y , "⌂")
-
-
-    if lValue >= MAP_SETTINGS[4]: # Checks if the highest value is a mountain, if it is then we start drawing the river
-        tb.setForegroundColor(MAP_COLORS[0], MAP_BRIGHT[0]) # Sets the color to bright blue
-        block temp: # Block that checks the nearest water tile
-            while true:
-                var t = 0
-                for y in 0..<MAP_HEIGHT:
-                    for x in 0..<MAP_WIDTH:
-                        let dist = sqrt(float((x - hPos.x)^2 + (y - hPos.y)^2))
-                        if lDist > dist and world[y][x] <= MAP_SETTINGS[1]: 
-                            lDist = dist
-                            wPos = (x,y)
-                            t = 1
-                if t == 0:
-                    break temp
-
-
-        while hw != wPos: # This one draws the river
-            var 
-                tmp = hw # Temporary coordinate tuple
-
-            if rand(1) == 0: # Decides if it writes vertically of horizontally
-                if hw.x < wPos.x: # Checks if the current tile is greater or lesser than the water position and changes the tile position accordingly
-                    hw.x += 1
-                    bb.drawHorizLine(tmp.x, hw.x, hw.y, doubleStyle=true)
-                elif hw.x > wPos.x:
-                    hw.x -= 1
-                    bb.drawHorizLine(tmp.x, hw.x, hw.y, doubleStyle=true)
-            else:
-                if hw.y < wPos.y:
-                    hw.y += 1
-                    bb.drawVertLine(hw.x, tmp.y, hw.y, doubleStyle=true)
-                elif hw.y > wPos.y:
-                    hw.y -= 1
-                    bb.drawVertLine(hw.x, tmp.y, hw.y, doubleStyle=true)
-            if rand(10) == 0 and world[tmp.y][tmp.x] <= MAP_SETTINGS[4]: # Draws the deviations of the rivers, still pretty buggy lol
-                var
-                    lx = tmp.x
-                    ly = tmp.y
-                    x = tmp.x
-                    y = tmp.y
-                    dx = tmp.x + rand(-2..2)
-                    dy = tmp.y + rand(-2..2)
-                while x != dx or y != dy:
+            elif MAP_SETTINGS[2] < map.hMap[y][x] and map.hMap[y][x] <= MAP_SETTINGS[3]: # Is plain or forest, we decide with the bMap
+                if map.bMap[y][x] <= 0.3:
                     if rand(1) == 0:
-                        if x < dx:
-                            if x < MAP_WIDTH-1:
-                                x += 1
-                                bb.drawHorizLine(lx, x, ly)
-                            else:
-                                break
-                        elif x > dx:
-                            if x > 0:
-                                x -= 1
-                                bb.drawHorizLine(lx, x, ly)
-                            else:
-                                break
+                        map.sMap[y][x] = MAP_TILES[3] # wiggly grass
                     else:
-                        if y < dy:
-                            if y < MAP_HEIGHT-1:
-                                y += 1
-                                bb.drawVertLine(lx, ly, y)
-                            else:
-                                break
-                        elif y > dy:
-                            if y > 0:
-                                y -= 1
-                                bb.drawVertLine(lx, ly, y)
-                            else:
-                                break
-                    lx = x
-                    ly = y
+                        map.sMap[y][x] = MAP_TILES[4] # straight grass
+                else:
+                    if rand(2) != 0:
+                        map.sMap[y][x] = MAP_TILES[5] # normal tree
+                    else:
+                        map.sMap[y][x] = MAP_TILES[6] # different tree
+
+            elif MAP_SETTINGS[3] < map.hMap[y][x] and map.hMap[y][x] <= MAP_SETTINGS[4]: # Is low mountain
+                map.sMap[y][x] = MAP_TILES[7]
+
+            elif MAP_SETTINGS[4] < map.hMap[y][x] and map.hMap[y][x] <= MAP_SETTINGS[5]: # Is high mountain
+                map.sMap[y][x] = MAP_TILES[8]
+
+            else:
+                map.sMap[y][x] = MAP_TILES[9]
 
 
-        tb.write(bb) # Writes the river
-        tb.write(hPos.x,hPos.y,"○") # Writes the source of the water
-        tb.write(wPos.x,wPos.y,"☼") # Writes the target of the water
+proc drawVillages(map: var Map, tb: var TerminalBuffer, amount: int): seq[tuple[x,y:int]] =
+    var 
+        temp, vPos: seq[tuple[x,y:int]] # vPos has to be a seq because nim can't compile the amount parameter at runtime :/
+    
+    for y in 0..<MAP_HEIGHT:
+        for x in 0..<MAP_WIDTH:
+            if MAP_SETTINGS[2] < map.hMap[y][x] and map.hMap[y][x] <= MAP_SETTINGS[3]:
+                temp.add((x,y))
+
+    for i in 0..<amount:
+        let vil = temp[rand(temp.len-1)]
+        vPos.add(vil)
+        for y in vil.y-1..vil.y+1:
+            for x in vil.x-1..vil.x+1:
+                if 0 <= x and x < MAP_WIDTH and 0 <= y and y < MAP_HEIGHT:
+                    if rand(1) == 0:
+                        map.sMap[y][x] = MAP_TILES[10]
+    
+    return vPos
+
+    
+proc drawPath(map: Map, tb: var TerminalBuffer, vPos: seq[tuple[x,y:int]]) =
+    var bb = newBoxBuffer(terminalWidth(), terminalHeight())
+    tb.setForegroundColor(fgYellow)
+    for i in 0..<vPos.len-1:
+        if vPos[i]$vPos[i+1] <= MAP_WIDTH/4:
+            var
+                x = vPos[i].x
+                y = vPos[i].y
+                flag = 0
+            
+            while x != vPos[i+1].x and y != vPos[i+1].y:
+                var 
+                    px = x
+                    py = y
+                if rand(1) == 0:
+                    if x < vPos[i+1].x: 
+                        if MAP_SETTINGS[2] < map.hMap[y][x+1] and map.hMap[y][x+1] <= MAP_SETTINGS[3]:
+                            x += 1
+                            bb.drawHorizLine(x, px, y)
+                            flag = 0
+                    elif x > vPos[i+1].x: 
+                        if MAP_SETTINGS[2] < map.hMap[y][x-1] and map.hMap[y][x-1] <= MAP_SETTINGS[3]:
+                            x -= 1
+                            bb.drawHorizLine(x, px, y)
+                            flag = 0
+                else:
+                    if y < vPos[i+1].y: 
+                        if MAP_SETTINGS[2] < map.hMap[y+1][x] and map.hMap[y+1][x] <= MAP_SETTINGS[3]:
+                            y += 1
+                            bb.drawVertLine(x, y, py)
+                            flag = 0
+                    elif y > vPos[i+1].y: 
+                        if MAP_SETTINGS[2] < map.hMap[y-1][x] and map.hMap[y-1][x] <= MAP_SETTINGS[3]:
+                            y -= 1
+                            bb.drawVertLine(x, y, py)
+                            flag = 0
+                if flag == 10:
+                    break
+                else:
+                    flag += 1
+    tb.write(bb)
+            
+proc drawMap() =
+    randomize()
+    var 
+        tb = newTerminalBuffer(terminalWidth(), terminalHeight())
+        map = createMap(rand(10000000), 3, 1, 0.08, 0.3, 1.6)
+        wCount = 0.0
+        fCount = 0.0
+
+    for y in 0..<MAP_HEIGHT:
+        for x in 0..<MAP_WIDTH:
+            if map.hMap[y][x] <= MAP_SETTINGS[1]:
+                wCount += 1
+            else:
+                fCount += 1
+
+    while wCount < MAP_HEIGHT*MAP_WIDTH/3 or fCount < MAP_HEIGHT*MAP_WIDTH/2:
+        map = createMap(rand(10000000), 3, 1, 0.08, 0.3, 1.6)
+        wCount = 0.0
+        fCount = 0.0
+        for y in 0..<MAP_HEIGHT:
+            for x in 0..<MAP_WIDTH:
+                if map.hMap[y][x] <= MAP_SETTINGS[1]:
+                    wCount += 1
+                else:
+                    fCount += 1
+
+    map.fillMap()
+    let pos = map.drawVillages(tb, 3)
+    
+    for y in 0..<MAP_HEIGHT:
+        for x in 0..<MAP_WIDTH:
+            tb.setForegroundColor(map.sMap[y][x].color, map.sMap[y][x].bright)
+            tb.write(x, y, map.sMap[y][x].tile)
+
+    #drawPath(map, tb, pos)
 
     tb.display()
-    sleep(1500)
-    tb.clear()
-    tb.resetAttributes()
-
 
 proc exitProc() {.noconv.} =
     illwillDeinit()
@@ -151,6 +172,6 @@ illwillInit(fullscreen=false)
 setControlCHook(exitProc)
 hideCursor()
 
-for i in 0..10:
-    var world = createWorld()
-    world.visualizeVArray()
+for i in 0..20:
+    drawMap()
+    sleep(1000)
